@@ -8,6 +8,13 @@
       "when": 1760548664315,
       "tag": "0000_remarkable_freak",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1763248111682,
+      "tag": "0001_loud_captain_cross",
+      "breakpoints": true
     }
   ]
 }
