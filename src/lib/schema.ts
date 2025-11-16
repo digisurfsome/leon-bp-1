@@ -5,6 +5,8 @@ import {
   boolean,
   serial,
   integer,
+  jsonb,
+  uuid,
 } from "drizzle-orm/pg-core";
 
 export const user = pgTable("user", {
@@ -57,10 +59,23 @@ export const verification = pgTable("verification", {
   updatedAt: timestamp("updatedAt").defaultNow(),
 });
 
+// Phase 4: Projects for multi-project RAG
+export const projects = pgTable("projects", {
+  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  userId: text("user_id").notNull(),
+  name: text("name").notNull(),
+  slug: text("slug").notNull(),
+  description: text("description"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 // Chat tables for Phase 4: RAG + Baton system
 export const chatSessions = pgTable("chat_sessions", {
   id: serial("id").primaryKey(),
-  userId: text("user_id").notNull(), // For now, hardcoded "dev-user"
+  userId: text("user_id").notNull(),
+  projectId: text("project_id").references(() => projects.id, {
+    onDelete: "set null",
+  }),
   title: text("title"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
@@ -79,14 +94,67 @@ export const chatMessages = pgTable("chat_messages", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
-export const chatSessionSummaries = pgTable("chat_session_summaries", {
-  id: serial("id").primaryKey(),
+// RAG Documents
+export const ragDocuments = pgTable("rag_documents", {
+  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  userId: text("user_id").notNull(),
+  projectId: text("project_id").references(() => projects.id, {
+    onDelete: "cascade",
+  }),
+  title: text("title").notNull(),
+  sourceType: text("source_type").notNull(), // 'manual', 'upload', 'scraped', etc.
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+// RAG Chunks with embeddings
+export const ragChunks = pgTable("rag_chunks", {
+  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  documentId: text("document_id").references(() => ragDocuments.id, {
+    onDelete: "cascade",
+  }),
+  userId: text("user_id").notNull(),
+  projectId: text("project_id").references(() => projects.id, {
+    onDelete: "cascade",
+  }),
+  sessionId: integer("session_id").references(() => chatSessions.id, {
+    onDelete: "set null",
+  }),
+  content: text("content").notNull(),
+  embedding: jsonb("embedding"), // Store as JSONB array (fallback if pgvector not available)
+  tokens: integer("tokens"),
+  tags: jsonb("tags").$type<string[]>(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+// Session Summaries (for baton system)
+export const sessionSummaries = pgTable("session_summaries", {
+  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
   sessionId: integer("session_id")
     .notNull()
     .references(() => chatSessions.id, { onDelete: "cascade" }),
-  summary: text("summary").notNull(),
-  summaryType: text("summary_type").notNull(), // 'baton' for now
-  tokenEstimate: integer("token_estimate").notNull(), // Sum of tokens from archived messages
-  coverageUntilMessageId: integer("coverage_until_message_id").notNull(), // Last message ID covered
+  projectId: text("project_id").references(() => projects.id, {
+    onDelete: "cascade",
+  }),
+  summaryText: text("summary_text").notNull(),
+  tokenCount: integer("token_count").notNull(),
+  coveredMessageFrom: integer("covered_message_from").notNull(),
+  coveredMessageTo: integer("covered_message_to").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+// Baton Events tracking
+export const batonEvents = pgTable("baton_events", {
+  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  sessionId: integer("session_id")
+    .notNull()
+    .references(() => chatSessions.id, { onDelete: "cascade" }),
+  projectId: text("project_id").references(() => projects.id, {
+    onDelete: "cascade",
+  }),
+  eventType: text("event_type").notNull(), // 'summary_created', 'context_reset', etc.
+  atTotalTokens: integer("at_total_tokens"),
+  summaryId: text("summary_id").references(() => sessionSummaries.id, {
+    onDelete: "set null",
+  }),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
