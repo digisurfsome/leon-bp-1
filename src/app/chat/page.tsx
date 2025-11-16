@@ -130,8 +130,11 @@ export default function ChatPage() {
   // TEMP: single shared user for local dev
   const userId = "dev-user";
 
-  const { messages, sendMessage, status } = useChat();
+  const { messages, sendMessage, status } = useChat({
+    api: "/api/chat",
+  });
   const [input, setInput] = useState("");
+  const [useWebSearch, setUseWebSearch] = useState(false);
 
   return (
     <div className="container mx-auto px-4 py-8">
@@ -166,29 +169,50 @@ export default function ChatPage() {
           ))}
         </div>
 
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            const text = input.trim();
-            if (!text) return;
-            sendMessage({ role: "user", parts: [{ type: "text", text }] });
-            setInput("");
-          }}
-          className="flex gap-2"
-        >
-          <input
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="Type your message..."
-            className="flex-1 p-2 border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
-          />
-          <Button
-            type="submit"
-            disabled={!input.trim() || status === "streaming"}
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="web-search"
+              checked={useWebSearch}
+              onChange={(e) => setUseWebSearch(e.target.checked)}
+              className="w-4 h-4 rounded border-border"
+            />
+            <label
+              htmlFor="web-search"
+              className="text-sm text-muted-foreground cursor-pointer"
+            >
+              Use web search (beta)
+            </label>
+          </div>
+
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              const text = input.trim();
+              if (!text) return;
+              sendMessage(
+                { role: "user", parts: [{ type: "text", text }] },
+                { body: { useWeb: useWebSearch } }
+              );
+              setInput("");
+            }}
+            className="flex gap-2"
           >
-            Send
-          </Button>
-        </form>
+            <input
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="Type your message..."
+              className="flex-1 p-2 border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+            <Button
+              type="submit"
+              disabled={!input.trim() || status === "streaming"}
+            >
+              {status === "streaming" ? "Sending..." : "Send"}
+            </Button>
+          </form>
+        </div>
       </div>
     </div>
   );
