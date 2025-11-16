@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { UserProfile } from "@/components/auth/user-profile";
+// import { UserProfile } from "@/components/auth/user-profile";
 import { ModeToggle } from "./ui/mode-toggle";
 import { Bot } from "lucide-react";
 
@@ -21,7 +21,8 @@ export function SiteHeader() {
           </Link>
         </h1>
         <div className="flex items-center gap-4">
-          <UserProfile />
+          {/* <UserProfile /> */}
+          <span className="text-sm text-muted-foreground">Dev mode (no auth)</span>
           <ModeToggle />
         </div>
       </div>
