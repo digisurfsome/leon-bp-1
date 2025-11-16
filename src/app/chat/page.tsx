@@ -1,13 +1,13 @@
 "use client";
 
-import { useChat } from "@ai-sdk/react";
 import { Button } from "@/components/ui/button";
 import { UserProfile } from "@/components/auth/user-profile";
 import { useSession } from "@/lib/auth-client";
-import { useState, type ReactNode } from "react";
+import { useState, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 
+// Markdown components
 const H1: React.FC<React.HTMLAttributes<HTMLHeadingElement>> = (props) => (
   <h1 className="mt-2 mb-3 text-2xl font-bold" {...props} />
 );
@@ -103,33 +103,195 @@ const markdownComponents: Components = {
   td: TD,
 };
 
-type TextPart = { type?: string; text?: string };
-type MaybePartsMessage = {
-  display?: ReactNode;
-  parts?: TextPart[];
-  content?: TextPart[];
-};
+// Types
+interface ModelPreset {
+  id: string;
+  provider: string;
+  modelId: string;
+  displayName: string;
+  description: string | null;
+  isActive: boolean;
+}
 
-function renderMessageContent(message: MaybePartsMessage): ReactNode {
-  if (message.display) return message.display;
-  const parts = Array.isArray(message.parts)
-    ? message.parts
-    : Array.isArray(message.content)
-    ? message.content
-    : [];
-  return parts.map((p, idx) =>
-    p?.type === "text" && p.text ? (
-      <ReactMarkdown key={idx} components={markdownComponents}>
-        {p.text}
-      </ReactMarkdown>
-    ) : null
-  );
+interface PersonaPreset {
+  id: string;
+  name: string;
+  systemPrompt: string;
+  description: string | null;
+  isActive: boolean;
+}
+
+interface ChatMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  modelKey?: string | null;
+  personaKey?: string | null;
+  variantGroupId?: string | null;
+  latencyMs?: number | null;
+  tokensTotal?: number | null;
+  createdAt: string | Date;
+}
+
+interface ChatSession {
+  id: string;
+  title: string | null;
+  messageCount?: number;
+  createdAt: string | Date;
+  updatedAt: string | Date;
+}
+
+interface ChatConfig {
+  models: ModelPreset[];
+  personas: PersonaPreset[];
 }
 
 export default function ChatPage() {
   const { data: session, isPending } = useSession();
-  const { messages, sendMessage, status } = useChat();
+  const [config, setConfig] = useState<ChatConfig | null>(null);
+  const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [selectedModels, setSelectedModels] = useState<string[]>([]);
+  const [selectedPersona, setSelectedPersona] = useState<string | null>(null);
   const [input, setInput] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [showSidebar, setShowSidebar] = useState(true);
+
+  // Fetch config on mount
+  useEffect(() => {
+    if (session?.user) {
+      fetchConfig();
+      fetchSessions();
+    }
+  }, [session]);
+
+  async function fetchConfig() {
+    try {
+      const res = await fetch("/api/chat/config");
+      if (res.ok) {
+        const data = await res.json();
+        setConfig(data);
+        // Set default selected model if available
+        if (data.userSettings?.defaultModelKey) {
+          setSelectedModels([data.userSettings.defaultModelKey]);
+        } else if (data.models.length > 0) {
+          setSelectedModels([data.models[0].id]);
+        }
+        if (data.userSettings?.defaultPersonaKey) {
+          setSelectedPersona(data.userSettings.defaultPersonaKey);
+        }
+      }
+    } catch (error) {
+      console.error("Failed to fetch config:", error);
+    }
+  }
+
+  async function fetchSessions() {
+    try {
+      const res = await fetch("/api/chat/sessions");
+      if (res.ok) {
+        const data = await res.json();
+        setSessions(data.sessions || []);
+      }
+    } catch (error) {
+      console.error("Failed to fetch sessions:", error);
+    }
+  }
+
+  async function loadSession(sessionId: string) {
+    try {
+      const res = await fetch(`/api/chat/sessions/${sessionId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setMessages(data.messages || []);
+        setCurrentSessionId(sessionId);
+      }
+    } catch (error) {
+      console.error("Failed to load session:", error);
+    }
+  }
+
+  async function sendMessage() {
+    if (!input.trim() || selectedModels.length === 0) return;
+
+    setIsLoading(true);
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId: currentSessionId,
+          message: input,
+          modelKeys: selectedModels,
+          personaKey: selectedPersona,
+        }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+
+        // Update session ID if this was a new session
+        if (!currentSessionId) {
+          setCurrentSessionId(data.sessionId);
+          fetchSessions(); // Refresh session list
+        }
+
+        // Add user message and all replies to messages
+        setMessages((prev) => [
+          ...prev,
+          data.userMessage,
+          ...data.replies,
+        ]);
+
+        setInput("");
+      } else {
+        console.error("Failed to send message");
+      }
+    } catch (error) {
+      console.error("Error sending message:", error);
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  function toggleModel(modelId: string) {
+    setSelectedModels((prev) =>
+      prev.includes(modelId)
+        ? prev.filter((id) => id !== modelId)
+        : [...prev, modelId]
+    );
+  }
+
+  function startNewChat() {
+    setCurrentSessionId(null);
+    setMessages([]);
+  }
+
+  // Group messages by variant group for display
+  function groupMessagesByVariant(msgs: ChatMessage[]) {
+    const grouped: Array<{
+      userMessage?: ChatMessage;
+      assistantMessages: ChatMessage[];
+    }> = [];
+
+    for (const msg of msgs) {
+      if (msg.role === "user") {
+        grouped.push({
+          userMessage: msg,
+          assistantMessages: [],
+        });
+      } else if (msg.role === "assistant") {
+        // Find the corresponding user message group
+        const lastGroup = grouped[grouped.length - 1];
+        if (lastGroup) {
+          lastGroup.assistantMessages.push(msg);
+        }
+      }
+    }
+
+    return grouped;
+  }
 
   if (isPending) {
     return <div className="container mx-auto px-4 py-12">Loading...</div>;
@@ -145,62 +307,184 @@ export default function ChatPage() {
     );
   }
 
-  return (
-    <div className="container mx-auto px-4 py-8">
-      <div className="max-w-4xl mx-auto">
-        <div className="flex justify-between items-center mb-6 pb-4 border-b">
-          <h1 className="text-2xl font-bold">AI Chat</h1>
-          <span className="text-sm text-muted-foreground">
-            Welcome, {session.user.name}!
-          </span>
-        </div>
+  const groupedMessages = groupMessagesByVariant(messages);
 
-        <div className="min-h-[50vh] overflow-y-auto space-y-4 mb-4">
-          {messages.length === 0 && (
-            <div className="text-center text-muted-foreground">
-              Start a conversation with AI
+  return (
+    <div className="h-screen flex">
+      {/* Sidebar */}
+      {showSidebar && (
+        <div className="w-64 border-r bg-muted/30 flex flex-col">
+          <div className="p-4 border-b">
+            <Button onClick={startNewChat} className="w-full">
+              New Chat
+            </Button>
+          </div>
+          <div className="flex-1 overflow-y-auto p-2">
+            <div className="text-xs font-medium text-muted-foreground mb-2 px-2">
+              Recent Sessions
+            </div>
+            {sessions.map((s) => (
+              <button
+                key={s.id}
+                onClick={() => loadSession(s.id)}
+                className={`w-full text-left p-2 rounded mb-1 text-sm hover:bg-muted ${
+                  currentSessionId === s.id ? "bg-muted" : ""
+                }`}
+              >
+                <div className="truncate">
+                  {s.title || "Untitled Chat"}
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  {s.messageCount || 0} messages
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Main chat area */}
+      <div className="flex-1 flex flex-col">
+        {/* Header */}
+        <div className="border-b p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowSidebar(!showSidebar)}
+              >
+                {showSidebar ? "Hide" : "Show"} Sidebar
+              </Button>
+              <h1 className="text-xl font-bold">Multi-Model Chat</h1>
+            </div>
+            <span className="text-sm text-muted-foreground">
+              {session.user.name}
+            </span>
+          </div>
+
+          {/* Model selector */}
+          <div className="flex flex-wrap gap-2">
+            <span className="text-sm font-medium">Select Models:</span>
+            {config?.models.map((model) => (
+              <button
+                key={model.id}
+                onClick={() => toggleModel(model.id)}
+                className={`px-3 py-1 rounded-md text-sm transition-colors ${
+                  selectedModels.includes(model.id)
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-muted hover:bg-muted/80"
+                }`}
+              >
+                {model.displayName}
+              </button>
+            ))}
+          </div>
+
+          {/* Persona selector (optional) */}
+          {config?.personas && config.personas.length > 0 && (
+            <div className="flex gap-2 mt-2">
+              <span className="text-sm font-medium">Persona:</span>
+              <select
+                value={selectedPersona || ""}
+                onChange={(e) => setSelectedPersona(e.target.value || null)}
+                className="text-sm border rounded px-2 py-1"
+              >
+                <option value="">Default</option>
+                {config.personas.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
             </div>
           )}
-          {messages.map((message) => (
-            <div
-              key={message.id}
-              className={`p-3 rounded-lg ${
-                message.role === "user"
-                  ? "bg-primary text-primary-foreground ml-auto max-w-[80%]"
-                  : "bg-muted max-w-[80%]"
-              }`}
-            >
-              <div className="text-sm font-medium mb-1">
-                {message.role === "user" ? "You" : "AI"}
-              </div>
-              <div>{renderMessageContent(message as MaybePartsMessage)}</div>
-            </div>
-          ))}
         </div>
 
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            const text = input.trim();
-            if (!text) return;
-            sendMessage({ role: "user", parts: [{ type: "text", text }] });
-            setInput("");
-          }}
-          className="flex gap-2"
-        >
-          <input
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="Type your message..."
-            className="flex-1 p-2 border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
-          />
-          <Button
-            type="submit"
-            disabled={!input.trim() || status === "streaming"}
+        {/* Messages */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-6">
+          {groupedMessages.length === 0 && (
+            <div className="text-center text-muted-foreground mt-8">
+              Select models and start a conversation
+            </div>
+          )}
+
+          {groupedMessages.map((group, idx) => (
+            <div key={idx} className="space-y-3">
+              {/* User message */}
+              {group.userMessage && (
+                <div className="flex justify-end">
+                  <div className="bg-primary text-primary-foreground p-3 rounded-lg max-w-[80%]">
+                    <div className="text-sm font-medium mb-1">You</div>
+                    <ReactMarkdown components={markdownComponents}>
+                      {group.userMessage.content}
+                    </ReactMarkdown>
+                  </div>
+                </div>
+              )}
+
+              {/* Assistant messages (one per model) */}
+              <div className="space-y-2">
+                {group.assistantMessages.map((msg) => {
+                  const model = config?.models.find((m) => m.id === msg.modelKey);
+                  return (
+                    <div key={msg.id} className="bg-muted p-3 rounded-lg max-w-[90%]">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="text-sm font-medium">
+                          {model?.displayName || "AI"}
+                        </div>
+                        {msg.latencyMs && msg.tokensTotal && (
+                          <div className="text-xs text-muted-foreground">
+                            {msg.latencyMs}ms · {msg.tokensTotal} tok
+                          </div>
+                        )}
+                      </div>
+                      <ReactMarkdown components={markdownComponents}>
+                        {msg.content}
+                      </ReactMarkdown>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+
+          {isLoading && (
+            <div className="text-center text-muted-foreground">
+              Getting responses from {selectedModels.length} model(s)...
+            </div>
+          )}
+        </div>
+
+        {/* Input */}
+        <div className="border-t p-4">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              sendMessage();
+            }}
+            className="flex gap-2"
           >
-            Send
-          </Button>
-        </form>
+            <input
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="Type your message..."
+              disabled={isLoading || selectedModels.length === 0}
+              className="flex-1 p-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
+            />
+            <Button
+              type="submit"
+              disabled={!input.trim() || isLoading || selectedModels.length === 0}
+            >
+              {isLoading ? "Sending..." : "Send"}
+            </Button>
+          </form>
+          {selectedModels.length === 0 && (
+            <div className="text-xs text-muted-foreground mt-1">
+              Please select at least one model
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

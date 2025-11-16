@@ -8,6 +8,13 @@
       "when": 1760548664315,
       "tag": "0000_remarkable_freak",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1763268522922,
+      "tag": "0001_common_vertigo",
+      "breakpoints": true
     }
   ]
 }
