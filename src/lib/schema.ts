@@ -1,4 +1,11 @@
-import { pgTable, text, timestamp, boolean } from "drizzle-orm/pg-core";
+import {
+  pgTable,
+  text,
+  timestamp,
+  boolean,
+  serial,
+  integer,
+} from "drizzle-orm/pg-core";
 
 export const user = pgTable("user", {
   id: text("id").primaryKey(),
@@ -48,4 +55,38 @@ export const verification = pgTable("verification", {
   expiresAt: timestamp("expiresAt").notNull(),
   createdAt: timestamp("createdAt").defaultNow(),
   updatedAt: timestamp("updatedAt").defaultNow(),
+});
+
+// Chat tables for Phase 4: RAG + Baton system
+export const chatSessions = pgTable("chat_sessions", {
+  id: serial("id").primaryKey(),
+  userId: text("user_id").notNull(), // For now, hardcoded "dev-user"
+  title: text("title"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const chatMessages = pgTable("chat_messages", {
+  id: serial("id").primaryKey(),
+  sessionId: integer("session_id")
+    .notNull()
+    .references(() => chatSessions.id, { onDelete: "cascade" }),
+  role: text("role").notNull(), // 'user', 'assistant', 'system'
+  content: text("content").notNull(),
+  model: text("model"), // Which model was used (for assistant messages)
+  approxTokens: integer("approx_tokens"), // Token estimate for context management
+  isArchived: boolean("is_archived").notNull().default(false), // For baton system
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const chatSessionSummaries = pgTable("chat_session_summaries", {
+  id: serial("id").primaryKey(),
+  sessionId: integer("session_id")
+    .notNull()
+    .references(() => chatSessions.id, { onDelete: "cascade" }),
+  summary: text("summary").notNull(),
+  summaryType: text("summary_type").notNull(), // 'baton' for now
+  tokenEstimate: integer("token_estimate").notNull(), // Sum of tokens from archived messages
+  coverageUntilMessageId: integer("coverage_until_message_id").notNull(), // Last message ID covered
+  createdAt: timestamp("created_at").notNull().defaultNow(),
 });

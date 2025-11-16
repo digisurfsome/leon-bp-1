@@ -126,15 +126,55 @@ function renderMessageContent(message: MaybePartsMessage): ReactNode {
   );
 }
 
+interface ContextInfo {
+  liveTokenTotal: number;
+  softLimit: number;
+  hardLimit: number;
+  loadRatio: number;
+  batonCount: number;
+  nextBatonInTokens: number;
+  justCreatedBaton: boolean;
+}
+
 export default function ChatPage() {
   // TEMP: single shared user for local dev
   const userId = "dev-user";
 
-  const { messages, sendMessage, status } = useChat({
-    api: "/api/chat",
-  });
+  const [sessionId, setSessionId] = useState<number | undefined>(undefined);
   const [input, setInput] = useState("");
   const [useWebSearch, setUseWebSearch] = useState(false);
+  const [contextInfo, setContextInfo] = useState<ContextInfo>({
+    liveTokenTotal: 0,
+    softLimit: 8000,
+    hardLimit: 12000,
+    loadRatio: 0,
+    batonCount: 0,
+    nextBatonInTokens: 12000,
+    justCreatedBaton: false,
+  });
+
+  const { messages, sendMessage, status } = useChat({
+    api: "/api/chat",
+    body: { sessionId },
+    onResponse: (response) => {
+      // Extract context info from response headers
+      const contextInfoHeader = response.headers.get("X-Context-Info");
+      const sessionIdHeader = response.headers.get("X-Session-Id");
+
+      if (contextInfoHeader) {
+        try {
+          const info = JSON.parse(contextInfoHeader);
+          setContextInfo(info);
+        } catch (e) {
+          console.error("Failed to parse context info:", e);
+        }
+      }
+
+      if (sessionIdHeader && !sessionId) {
+        setSessionId(parseInt(sessionIdHeader));
+      }
+    },
+  });
 
   return (
     <div className="container mx-auto px-4 py-8">
@@ -144,6 +184,55 @@ export default function ChatPage() {
           <span className="text-sm text-muted-foreground">
             Welcome, {userId}!
           </span>
+        </div>
+
+        {/* Context Health Panel */}
+        <div className="mb-6 p-4 border rounded-lg bg-card">
+          <h2 className="text-sm font-semibold mb-3">Context Health</h2>
+
+          {/* Progress Bar */}
+          <div className="mb-3">
+            <div className="flex justify-between text-xs text-muted-foreground mb-1">
+              <span>Context Load</span>
+              <span>
+                {contextInfo.liveTokenTotal} / {contextInfo.hardLimit} tokens
+              </span>
+            </div>
+            <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
+              <div
+                className={`h-full transition-all duration-300 ${
+                  contextInfo.loadRatio < 0.6
+                    ? "bg-green-500"
+                    : contextInfo.loadRatio < 0.9
+                    ? "bg-yellow-500"
+                    : "bg-red-500"
+                }`}
+                style={{ width: `${Math.min(contextInfo.loadRatio * 100, 100)}%` }}
+              />
+            </div>
+          </div>
+
+          {/* Stats */}
+          <div className="flex gap-4 text-xs">
+            <div className="flex items-center gap-2">
+              <span className="text-muted-foreground">Baton passes:</span>
+              <span className="font-medium">{contextInfo.batonCount}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-muted-foreground">Next baton in:</span>
+              <span className="font-medium">
+                ~{contextInfo.nextBatonInTokens} tokens
+              </span>
+            </div>
+          </div>
+
+          {/* Baton pass notice */}
+          {contextInfo.justCreatedBaton && (
+            <div className="mt-3 p-2 bg-blue-500/10 border border-blue-500/20 rounded text-xs text-blue-600 dark:text-blue-400">
+              🔁 Baton pass: older messages were summarized into memory. Context
+              reset.
+            </div>
+          )}
         </div>
 
         <div className="min-h-[50vh] overflow-y-auto space-y-4 mb-4">
